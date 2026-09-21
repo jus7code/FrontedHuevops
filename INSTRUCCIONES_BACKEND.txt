@@ -1,0 +1,289 @@
+HUEVOPS - INSTRUCCIONES PARA EL BACKEND
+====================================
+
+Este documento describe el contrato implementado actualmente en el frontend.
+Actualizado segun INTEGRACION_FRONTEND.txt recibido del backend.
+Endpoint en codigo: lib/backend-config.ts -> wss://receiver-libraries-outline-evident.trycloudflare.com/video.
+El modelo de deteccion se ejecuta en el backend, no en el navegador.
+
+1. CONEXION
+-----------
+Exponer un endpoint WebSocket bidireccional, por ejemplo:
+
+  Servidor configurado: wss://receiver-libraries-outline-evident.trycloudflare.com/video
+  Produccion: wss://tu-backend.com/video
+
+Si el frontend se sirve por HTTPS, requiere wss://.
+Se usa WebSocket nativo; no Socket.IO ni un endpoint HTTP POST.
+La misma conexion recibe video y devuelve resultados de deteccion.
+La camara solo se envia cuando el usuario pulsa Iniciar transmision.
+No se envia audio.
+
+2. PRIMER MENSAJE DEL FRONTEND: TEXTO JSON
+----------------------------------------
+Al abrir la conexion, el frontend envia:
+
+{
+  "type": "start",
+  "sessionId": "uuid-generado-por-el-frontend",
+  "mimeType": "video/webm;codecs=vp8",
+  "width": 1280,
+  "height": 720,
+  "fps": 30,
+  "timesliceMs": 200
+}
+
+Significado:
+- type: siempre "start".
+- sessionId: identificador de esta sesion. Guardarlo y devolverlo sin cambios.
+- mimeType: contenedor y, cuando se especifica, codec del flujo.
+- width / height: dimensiones reportadas por la camara.
+- fps: tasa de captura reportada por la camara, no velocidad de inferencia.
+- timesliceMs: intervalo solicitado al navegador para entregar fragmentos.
+
+Los valores de resolucion y FPS del ejemplo NO son constantes. width y height
+son enteros positivos obligatorios; fps puede omitirse. El decodificador usa la
+informacion real del flujo de video como fuente de verdad.
+
+El frontend elige el primer formato compatible con el navegador en este orden:
+  1) video/webm;codecs=vp8
+  2) video/webm;codecs=vp9
+
+MP4 no se admite. Sin soporte WebM, el frontend muestra un error.
+
+No existe negociacion de codecs con el backend todavia. El servidor debe
+soportar el formato anunciado o se debe ajustar este contrato y el frontend.
+Si no lo soporta, puede cerrar la conexion con un codigo apropiado, por ejemplo
+1003. El frontend muestra el codigo de cierre y el motivo, si se recibe.
+
+El navegador solicita aproximadamente 2.000.000 bits/s para codificar video.
+Esto no garantiza un bitrate exacto.
+
+3. MENSAJES SIGUIENTES: VIDEO BINARIO CONTINUO
+-------------------------------------------
+Inmediatamente despues de start, el frontend inicia MediaRecorder y envia
+mensajes binarios con fragmentos de video aproximadamente cada 200 ms.
+No espera una confirmacion del servidor.
+
+Cada mensaje binario contiene directamente bytes del flujo codificado:
+- No contiene JSON.
+- No usa Base64.
+- No es una foto JPEG ni PNG.
+- No usa multipart/form-data.
+- No incluye una cabecera personalizada con sessionId o timestamp.
+La conexion WebSocket identifica a que sesion pertenece cada fragmento.
+
+IMPORTANTE: los fragmentos son partes de un MISMO flujo de video.
+No son archivos reproducibles independientes ni un fotograma por mensaje.
+Su tamano y frecuencia pueden variar. El intervalo de 200 ms no es exacto
+y no significa que el video sea de 5 FPS.
+
+El backend debe:
+1) Crear un decodificador incremental por conexion/sesion.
+2) Entregarle todos los bytes desde el primer fragmento, en orden.
+3) Mantener el decodificador abierto mientras dure la conexion.
+4) Extraer fotogramas decodificados y ejecutar el modelo sobre ellos.
+
+No intentar decodificar cada fragmento como una imagen ni abrir un archivo
+nuevo por mensaje. No descartar fragmentos codificados intermedios: pueden
+contener informacion necesaria para decodificar los siguientes.
+
+Puede usarse un decodificador basado en FFmpeg, PyAV u otra herramienta que
+soporte el contenedor/codec anunciado y entrada incremental. La configuracion
+concreta del decodificador debe probarse con el flujo real del navegador.
+
+4. PROCESAMIENTO Y CONTROL DE LATENCIA
+-------------------------------------
+Flujo esperado:
+
+  Recibir start
+      -> Preparar decodificador de la sesion
+      -> Recibir bytes continuamente
+      -> Decodificar fotogramas
+      -> Ejecutar inferencia
+      -> Convertir cajas al video original
+      -> Enviar detecciones por el mismo WebSocket
+
+La recepcion de video debe continuar mientras el modelo procesa fotogramas.
+Evitar bloquear la recepcion con inferencias largas.
+Usar colas limitadas. Si el modelo es mas lento que la camara, seleccionar
+fotogramas YA DECODIFICADOS recientes para inferencia, evitando acumular
+trabajo antiguo. Esto es distinto de descartar bytes del flujo codificado.
+
+El frontend detiene la conexion si un nuevo fragmento haria superar
+4.000.000 bytes pendientes en la cola de envio del WebSocket.
+Ese control no mide la cola interna del backend: el servidor debe limitarla.
+
+5. RESPUESTA DEL BACKEND: TEXTO JSON
+----------------------------------
+Enviar cada resultado como mensaje de TEXTO JSON por el mismo WebSocket:
+
+{
+  "type": "detections",
+  "sessionId": "uuid-generado-por-el-frontend",
+  "sequence": 1,
+  "detections": [
+    {
+      "id": "egg-1",
+      "label": "Huevo",
+      "status": "Roto",
+      "confidence": 0.97,
+      "box": [0.15, 0.23, 0.17, 0.43]
+    },
+    {
+      "id": "egg-2",
+      "label": "Huevo",
+      "status": "Sano",
+      "confidence": 0.93,
+      "box": [0.55, 0.20, 0.18, 0.40]
+    }
+  ]
+}
+
+Reglas de validacion:
+- type: exactamente "detections".
+- sessionId: texto identico al recibido en start.
+- sequence: entero seguro de JavaScript, no negativo, creciente por respuesta.
+  Se recomienda comenzar en 1 e incrementar de uno en uno por sesion.
+- detections: lista de 0 a 500 objetos.
+- id: texto unico dentro de cada respuesta.
+- label: texto para mostrar sobre la caja, por ejemplo "Huevo".
+- status: exactamente "Sano" o "Roto".
+- confidence: numero finito entre 0 y 1, NO porcentaje entre 0 y 100.
+- box: exactamente cuatro numeros finitos [x, y, ancho, alto].
+
+El mensaje de texto no debe superar 1.000.000 de unidades de longitud de
+cadena JavaScript. Mantener las respuestas pequenas.
+
+No es obligatorio mantener el mismo id entre respuestas para dibujar cajas.
+Si el backend implementa tracking, puede conservar los IDs de cada huevo.
+El frontend cuenta detecciones visibles de la ultima respuesta, NO huevos
+unicos acumulados durante la sesion.
+
+Cada respuesta reemplaza la lista completa anterior. No enviar solo cambios
+parciales ni detecciones individuales si faltan las demas del mismo resultado.
+
+6. COORDENADAS DE LAS CAJAS
+-------------------------
+Formato: [x, y, ancho, alto], normalizado respecto al VIDEO ORIGINAL COMPLETO.
+Origen: esquina superior izquierda. Eje X hacia la derecha, Y hacia abajo.
+La vista del frontend no aplica espejo ni recorta el video.
+
+Condiciones:
+- Cada valor debe estar entre 0 y 1.
+- ancho y alto deben ser mayores que cero.
+- x + ancho no debe superar 1.
+- y + alto no debe superar 1.
+
+Ejemplo: [0.15, 0.23, 0.17, 0.43] significa que la esquina superior izquierda
+esta al 15% del ancho y al 23% del alto del video. La caja ocupa el 17% del
+ancho y el 43% del alto.
+
+Si el modelo devuelve [x1, y1, x2, y2] en pixeles del video original:
+
+  box = [
+      x1 / video_width,
+      y1 / video_height,
+      (x2 - x1) / video_width,
+      (y2 - y1) / video_height
+  ]
+
+Si el modelo usa resize, crop o letterboxing, deshacer esas transformaciones
+antes de normalizar. Recortar las cajas a los limites del video original y
+descartar las que queden sin area.
+
+7. CUANDO NO HAY DETECCIONES
+---------------------------
+Enviar explicitamente una lista vacia:
+
+{
+  "type": "detections",
+  "sessionId": "uuid-generado-por-el-frontend",
+  "sequence": 2,
+  "detections": []
+}
+
+Esto limpia inmediatamente las cajas y muestra cero detecciones.
+Si no llegan resultados validos nuevos durante 1,5 segundos, el frontend
+oculta las cajas antiguas y vuelve al estado de espera de resultados.
+La confianza minima elegida por el usuario filtra solo la visualizacion;
+actualmente ese valor no se envia al backend.
+
+8. MENSAJES ADMITIDOS Y ERRORES
+-----------------------------
+IMPORTANTE: el frontend actual solo acepta mensajes de aplicacion del tipo
+"detections". No enviar JSON de ACK, ready, progreso, error o heartbeat,
+ni mensajes binarios de vuelta: se consideran incompatibles y se cierra
+la conexion. Los ping/pong de control del protocolo WebSocket son diferentes
+de los mensajes de aplicacion y no se procesan como JSON por esta interfaz.
+
+Si se necesitan mensajes adicionales, acordarlos y modificar el frontend.
+Para un error del servidor, cerrar el WebSocket y registrar el detalle en
+el backend. El frontend muestra el motivo de cierre cuando esta disponible.
+
+El frontend ignora resultados validos de otra sesion y respuestas con
+sequence igual o menor al ultimo recibido. Si la inferencia es concurrente,
+publicar resultados en orden temporal o descartar resultados antiguos;
+no asignar una secuencia mayor a un resultado viejo solo porque termino tarde.
+
+El intento de conexion tiene un timeout de 10 segundos. Despues de abrirse,
+no hay un timeout que cierre la sesion por falta de detecciones: solo se
+ocultan las cajas tras 1,5 segundos.
+
+9. CIERRE Y RECONEXION
+---------------------
+Al detener la transmision, el frontend cierra el WebSocket.
+NO envia un JSON de tipo "stop" ni garantiza enviar el fragmento final
+generado al detener MediaRecorder. Tratar el flujo como una transmision
+interrumpible, no como un archivo que siempre tiene un cierre completo.
+
+Al desconectarse:
+- Liberar el decodificador y sus procesos asociados.
+- Cancelar trabajos pendientes de esa sesion y liberar sus colas.
+- Evitar enviar resultados despues del cierre.
+
+La reconexion es manual. Cada nueva conexion lleva un sessionId nuevo y
+un nuevo flujo con su cabecera inicial. No reutilizar el decodificador anterior.
+
+10. AUTENTICACION Y DESPLIEGUE
+-----------------------------
+Actualmente el frontend no envia tokens, cabeceras de autorizacion
+personalizadas ni subprotocolos WebSocket. La autenticacion esta pendiente
+de acordar. No exigir campos que el frontend aun no envia sin adaptar ambos.
+
+El backend y cualquier proxy deben aceptar la actualizacion a WebSocket.
+Validar el Origin del frontend y configurar wss:// para uso desde HTTPS.
+No colocar secretos del servidor en el codigo del frontend.
+
+11. LIMITACION ACTUAL DE SINCRONIZACION
+-------------------------------------
+El video mostrado es la vista local de la camara. Las cajas se dibujan con
+la ultima respuesta del backend; no hay sincronizacion exacta por fotograma.
+La latencia de red, decodificacion e inferencia puede desplazar las cajas
+respecto a objetos que se mueven.
+
+No se envian timestamps de captura ni IDs de fotograma en los fragmentos.
+sequence ordena respuestas; NO identifica un fotograma capturado.
+Para sincronizacion exacta o menores latencias se debe definir un contrato
+adicional, o evaluar WebRTC con soporte y senalizacion en el backend.
+
+12. CRITERIOS DE PRUEBA DE INTEGRACION
+------------------------------------
+- Abrir WebSocket, recibir start y comprobar el mimeType real.
+- Decodificar varios segundos de fragmentos consecutivos sin reiniciar
+  el decodificador por cada mensaje.
+- Detectar un huevo y devolver una caja alineada con el video original.
+- Probar varias resoluciones y cualquier transformacion aplicada al modelo.
+- Retirar los huevos y enviar detections: [].
+- Comprobar que los resultados no acumulan retraso durante una sesion larga.
+- Detener, liberar recursos y volver a conectar con una sesion nueva.
+- Probar desconexion de red y del dispositivo de camara.
+- Confirmar que no se envian ACK u otros JSON incompatibles al frontend.
+
+ARCHIVOS DE REFERENCIA DEL FRONTEND
+----------------------------------
+lib/video-transport.ts : conexion y envio de video.
+lib/detections.ts      : validacion del JSON recibido.
+app/page.tsx          : camara, cajas, estado y limpieza de resultados.
+
+La integracion con el modelo real sigue pendiente de probar con el endpoint.

@@ -12,11 +12,13 @@ Node.js >= 22.13. Ejecuta `npm install` y `npm run dev`; abre la URL local indic
 - La demostración usa ilustraciones y datos simulados, sin inferencia ni envío.
 - El conteo es de la última respuesta, no un acumulado de huevos únicos. El umbral solo filtra la visualización. FPS es la tasa configurada de captura, no la velocidad del modelo.
 
-## Contrato provisional (pendiente del backend real)
+## Contrato del backend recibido
+
+Integrado conforme a `INTEGRACION_FRONTEND.txt`. La dirección está directamente en `lib/backend-config.ts`: `wss://receiver-libraries-outline-evident.trycloudflare.com/video`. Es un túnel seguro temporal proporcionado por el backend; la prueba con cámara y modelo reales requiere que el túnel y el servicio backend permanezcan activos.
 
 Adaptador: `lib/video-transport.ts`. Validación: `lib/detections.ts`.
 
-MediaRecorder envía video codificado por WebSocket; no se toman fotos ni se envían JPEG. Selecciona WebM/VP8, WebM/VP9 o MP4 según el navegador. El backend debe admitir el MIME anunciado.
+MediaRecorder envía video codificado por WebSocket; no se toman fotos ni se envían JPEG. Selecciona exclusivamente WebM/VP8 o WebM/VP9. MP4 no se admite. Antes de conectar se validan el estado de la cámara y sus dimensiones reales, obligatorias y enteras positivas.
 
 Primer mensaje de texto:
 
@@ -29,10 +31,11 @@ Después llegan fragmentos binarios aproximadamente cada 200 ms. **Forman un mis
 Respuesta de texto JSON:
 
 ```json
-{"type":"detections","sessionId":"uuid-del-cliente","sequence":1,"detections":[{"id":"egg-1","label":"Huevo","confidence":0.97,"box":[0.15,0.23,0.17,0.43]}]}
+{"type":"detections","sessionId":"uuid-del-cliente","sequence":1,"detections":[{"id":"egg-1","label":"Huevo","status":"Roto","confidence":0.97,"box":[0.15,0.23,0.17,0.43]}]}
 ```
 
 - `sequence`: entero creciente por respuesta. Se ignoran resultados anteriores, repetidos o de otra sesión.
+- `status`: exactamente `Sano` o `Roto`.
 - `box`: `[x, y, ancho, alto]`, normalizados de 0 a 1 respecto al video completo; origen arriba a la izquierda. Sin espejo ni recorte.
 - `confidence`: 0 a 1. IDs únicos dentro de cada respuesta.
 - `detections: []` limpia las cajas. Sin respuestas durante 1.5 s, se ocultan resultados antiguos.

@@ -4,8 +4,14 @@ export function connectVideo(stream: MediaStream, endpoint: string, callbacks: {
   if (!['ws:', 'wss:'].includes(url.protocol)) throw new Error('Usa una dirección ws:// o wss://.');
   if (location.protocol === 'https:' && url.protocol !== 'wss:') throw new Error('Esta página necesita un endpoint seguro wss://.');
   if (typeof MediaRecorder === 'undefined') throw new Error('Este navegador no permite transmitir video. Prueba Chrome o Edge.');
-  const mimeType = ['video/webm;codecs=vp8', 'video/webm;codecs=vp9', 'video/mp4'].find(t => MediaRecorder.isTypeSupported(t));
-  if (!mimeType) throw new Error('No hay un formato de video compatible.');
+  const mimeType = ['video/webm;codecs=vp8', 'video/webm;codecs=vp9'].find(t => MediaRecorder.isTypeSupported(t));
+  if (!mimeType) throw new Error('El backend requiere WebM con VP8 o VP9. Usa un navegador compatible, como Chrome o Edge.');
+  const track = stream.getVideoTracks()[0];
+  if (!track || track.readyState !== 'live') throw new Error('Activa una cámara antes de transmitir.');
+  const s = track.getSettings();
+  if (!Number.isInteger(s.width) || !Number.isInteger(s.height) || (s.width ?? 0) <= 0 || (s.height ?? 0) <= 0) {
+    throw new Error('No se pudieron obtener las dimensiones reales de la cámara. Vuelve a activarla.');
+  }
   const socket = new WebSocket(url);
   const sessionId = crypto.randomUUID();
   let recorder: MediaRecorder | undefined;
@@ -23,7 +29,6 @@ export function connectVideo(stream: MediaStream, endpoint: string, callbacks: {
     if (closed) return;
     clearTimeout(timeout);
     try {
-      const s = stream.getVideoTracks()[0].getSettings();
       socket.send(JSON.stringify({ type: 'start', sessionId, mimeType, width: s.width, height: s.height, fps: s.frameRate, timesliceMs: 200 }));
       recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 2000000 });
       recorder.ondataavailable = ({ data }) => {
@@ -46,6 +51,6 @@ export function connectVideo(stream: MediaStream, endpoint: string, callbacks: {
     } catch { fail('El backend respondió con un formato incompatible. Revisa el contrato de integración.'); }
   };
   socket.onerror = () => fail('No se pudo conectar al backend. Revisa su disponibilidad.');
-  socket.onclose = () => fail('Se perdió la conexión con el backend. Vuelve a conectar para continuar.');
+  socket.onclose = event => fail(`El backend cerró la conexión (código ${event.code})${event.reason ? `: ${event.reason}` : '. Vuelve a conectar para continuar.'}`);
   return stop;
 }

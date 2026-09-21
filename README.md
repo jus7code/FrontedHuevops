@@ -13,4 +13,6 @@ Abre la URL local indicada y activa la cámara. Puedes explorar la demostración
 - `npm test`: validación de respuestas de detección.
 - `npx tsc --noEmit`: verificación de tipos.
 
-Consulta [INTEGRACION.md](INTEGRACION.md) para el protocolo provisional, formato de cajas, limitaciones de sincronización y requisitos del backend. El endpoint y el contrato definitivo están pendientes.
+El endpoint está escrito en `lib/backend-config.ts`: `ws://44.199.34.125:8000/video`, sin variables de entorno ni exclusiones de Git. Inicia el backend en ese puerto, activa la cámara y pulsa «Iniciar transmisión».
+
+Consulta [INTEGRACION.md](INTEGRACION.md) para el contrato recibido, formato de cajas y limitaciones de sincronización. Falta verificar la inferencia con el backend real en ejecución.
