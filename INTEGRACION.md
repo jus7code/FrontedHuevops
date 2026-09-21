@@ -50,3 +50,13 @@ Fuentes: [MediaRecorder.start](https://developer.mozilla.org/en-US/docs/Web/API/
 ## Imagen de presentación
 
 `public/og.png` se generó con ImageGen integrado. Brief: tarjeta horizontal HuevOps, fondo blanco roto, tipografía verde bosque, tres huevos con cajas de detección y textos «Cada huevo, a la vista.» y «Visión en tiempo real».
+
+## Historial de fotos
+
+Se inspecciona un huevo a la vez durante 3 segundos desde la primera prediccion valida. Cada respuesta con exactamente un huevo y confianza suficiente suma un voto Sano o Roto. Los IDs pueden cambiar sin abrir una nueva lectura. Al completar la ventana se guarda un unico resultado por mayoria, con votos y la foto de mayor confianza de la clase ganadora. Sano corresponde a Mantener; Roto a Desechar. Un empate, menos de dos votos o la falta de foto requieren retirar y volver a colocar el huevo, sin guardar resultado.
+
+La interfaz indica colocar, mantener quieto con cuenta regresiva y retirar. Tras finalizar, solo se habilita otro huevo al recibir respuestas explicitamente vacias durante al menos un segundo, sin interrupciones de 1.5 segundos. Silencio, baja confianza o cambios de ID no desbloquean la siguiente lectura. Detener/reconectar conserva el bloqueo de una lectura finalizada. Multiples huevos, una respuesta vacia o baja confianza cancelan una lectura en curso; 1.5 segundos sin predicciones validas tambien la cancelan.
+
+Se conservan los 100 resultados recientes en memoria mientras la pagina esta abierta, incluso al detener la camara; se pueden descargar o limpiar. Recargar elimina el historial. Limpiar no desbloquea el huevo ya clasificado. La demo no genera registros. El usuario debe retirar cada huevo antes de presentar el siguiente; no se garantiza identidad fisica si intercambia huevos sin vaciar la vista.
+
+Las fotos son recortes JPEG del video local al recibir predicciones, no del fotograma exacto analizado por el backend. La latencia puede afectar el recorte si el huevo se mueve. La clasificacion final representa la mayoria del modelo, no una garantia de exactitud.
