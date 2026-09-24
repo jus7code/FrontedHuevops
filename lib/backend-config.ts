@@ -1,2 +1,3 @@
-// Backend expuesto directamente en la IP y puerto indicados por la integración.
-export const BACKEND_VIDEO_URL = 'ws://44.199.34.125:8000/video';
+// Next.js incorpora esta variable pública al compilar el frontend.
+export const BACKEND_VIDEO_URL =
+  process.env.NEXT_PUBLIC_BACKEND_VIDEO_URL?.trim() || 'ws://44.199.34.125:8000/video';

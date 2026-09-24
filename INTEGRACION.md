@@ -14,7 +14,7 @@ Node.js >= 22.13. Ejecuta `npm install` y `npm run dev`; abre la URL local indic
 
 ## Contrato del backend recibido
 
-Integrado conforme a `INTEGRACION_FRONTEND.txt`. La dirección está directamente en `lib/backend-config.ts`: `wss://receiver-libraries-outline-evident.trycloudflare.com/video`. Es un túnel seguro temporal proporcionado por el backend; la prueba con cámara y modelo reales requiere que el túnel y el servicio backend permanezcan activos.
+El endpoint se configura con `NEXT_PUBLIC_BACKEND_VIDEO_URL` (ver `.env.example` y `README.md`). Sin esa variable, `lib/backend-config.ts` utiliza `ws://44.199.34.125:8000/video` para desarrollo. En Vercel se necesita una URL `wss://` con TLS configurado. La prueba con cámara y modelo reales requiere que el endpoint y el servicio backend permanezcan activos.
 
 Adaptador: `lib/video-transport.ts`. Validación: `lib/detections.ts`.
 
